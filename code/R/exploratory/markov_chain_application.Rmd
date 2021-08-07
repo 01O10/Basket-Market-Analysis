@@ -1,0 +1,164 @@
+---
+title: "Short post on market basket analysis : a Markov chain solution"
+output:
+  html_document: default
+  pdf_document: default
+editor_options:
+  markdown:
+    wrap: sentence
+  chunk_output_type: console
+---
+
+## Key-words
+
+R ; Markov Chain ; Tidyverse ; Code parallelization ; Real dataset ; Market basket analysis
+
+## Intro
+
+The dataset used in this short post is a relational set of files describing customers' orders over time using the Instacart service.
+The goal is to predict which products will be reordered.
+
+`For details, see https://www.kaggle.com/c/instacart-market-basket-analysis/data`{style="color: pink"}
+
+The solution we provide here relies on the use of Markov Chain for making such a prediction.
+It has been inspired from the one provided by the Data scientist and Kaggle grandmaster Matt Motoki.
+
+`For details, see https://www.kaggle.com/mmotoki/markov-chain-tutorial`{style="color : pink"}
+
+The solution we implement has some difference with the one provide by Matt Motoki :
+
+1.  **On the content** : instead of implementing a general Markov Chain based on the total dataset, here we implement one specific Markov chain by user to provide a person-centric solution.
+
+2.  **On the form** : the code we produced here relies on the Tidyverse package and the used of nested/mapping functions.
+    As such, we lose in code factorization comparing to Matt Motoki's R code but we gain in terms of comprehensiveness.
+    Furthermore, the combination of nested and mapping functions permits to adopt a clear 'parallelized' analytical way of thinking and coding here.
+    This is a strong advantage if we have the perspective to scale-up the present R code for big data analysis (using the furrr package for instance).
+
+### Core idea
+
+The core idea consists in creating a Markov Chain for each product and each user.
+
+As a reminder, Markov chain relies on the fundamental Markov property.
+Such a property assumes that, when making a prediction regarding the future evolution of a given phenomena (ordering here), all the necessary information for making such a prediction is contained in the present time.
+Thus, in the present dataset, Markov property assumes that a given order made at time k+1 only depends on the order made previously at time k.
+As such, Markov chains are called no-memory processes.
+
+### A Markov chain solution
+
+In the present study, a Markov chain can be represented graphically with two sates (0 : not ordered, 1 : ordered) and three transitions :
+
+0-\>1 : from not ordered (previous order) to ordered (next order)
+
+1-\>0 : from ordered (previous order) to not ordered (next order)
+
+1-\>1 : from ordered (previous order) to ordered (next order)
+
+```{r markov_chain_graph, include=FALSE, results='hide'}
+library(tidyverse)
+library(furrr)
+library(tictoc)
+library(sparklyr)
+library(data.table)
+
+plan(multisession,workers = 2)
+```
+
+## Preparing data for analysis
+
+We use the 'tidyverse' and the 'data.table' packages for preparing data.
+First, we load 'orders.csv' and 'order_products\_\_prior.csv' datasets.
+
+```{r load_data,tidy=TRUE,warning=FALSE,message=FALSE}
+
+orders <- fread("Downloads/dataset/instacart-market-basket-analysis/orders.csv/orders.csv", select=c("order_id", "user_id", "order_number")) #eval_set?
+
+orderp <- fread("Downloads/dataset/instacart-market-basket-analysis/order_products__prior.csv/order_products__prior.csv", drop="add_to_cart_order")
+```
+
+Next, we wrangle data to produce the 'order_list' data.frame.
+This last one contains a joined version of 'orders.csv' and 'order_products\_\_prior.csv' datasets.
+Because raw data provided billions of observations, here we use an extra-parameter (n_users) to permit to temporary focus on a limited set of data.
+This parameter must be adapted depending on the calculation power available.
+
+```{r data_preparation : cleaning data,warning=FALSE,message=FALSE}
+# Producing a toy-case dataset of limited size.
+n_users = 10
+orders_ = orders %>% filter(user_id %in% seq(n_users))
+orderp_ = orderp %>% right_join(orders_) %>% select(order_id,product_id)
+
+# Extracting the list of products from data
+product_list = 
+  orderp_ %>% 
+  nest_by(order_id) %>% 
+  mutate(data = future_map(.x = data, .f = function(lambda) lambda)) %>% 
+  rename(current_order = data)
+
+# Asd product_list to 'orders_' data.frame
+order_list = merge(orders_, product_list, by = 'order_id')
+
+head(order_list)
+```
+
+## Markov chain modeling
+
+From the previous part, here, we transform the 'order_list' data.frame by adding the Markov chain transition states and their corresponding probabilities.
+These transition states represent that ones from the graph above.
+
+```{r data_preparation : adding transisions, warning=FALSE,message=FALSE}
+N_PRODUCTS <- 49688L
+transitionCount <- function(L) tabulate(unlist(L), nbins=N_PRODUCTS)
+#tic()
+nested_order_list = 
+  order_list %>% 
+  arrange(user_id,order_number) %>% 
+  nest_by(user_id) %>% 
+  ungroup() %>% 
+  mutate(
+      
+      
+      data_info = 
+          future_map(.x = data,
+              .f = function (lambda) 
+                  lambda %>% 
+                  summarise(
+                      n_orders = dim(lambda)[[1]])),
+      
+      
+      transitions = 
+          future_map(.x = data,
+              .f = function (lambda) 
+                  lambda %>% 
+                  summarise(
+                      previous_order = lag(current_order,1),
+                      t11 = mapply(intersect,current_order,previous_order),
+                      t01 = mapply(setdiff,current_order,previous_order),  
+                      t10 = mapply(setdiff,previous_order,current_order))),
+      
+      
+      transitions_counts =
+            future_pmap(list(transitions, data_info),
+                .f = function (transitions, data_info)
+                    transitions %>%
+                    summarise(
+                        n1 = transitionCount(previous_order),
+                        n0 = data_info$n_orders - n1,
+                        n11 = transitionCount(t11),
+                        n10 = transitionCount(t10),
+                        n01 = transitionCount(t01),
+                        n00 = n0 - n01)),
+      
+      
+        transitions_probabilities =
+            future_map(.x = transitions_counts,
+                .f = function (lambda)
+                    lambda %>%
+                    summarise(
+                        p0 = (n0)/(n0+n1),
+                        p1 = 1 - p0,
+                        P00 = n00 / n0,
+                        p01 = n01 / n0,
+                        p10 = ifelse(is.nan(n01 / n1),0,n01 / n1),
+                        p11 = ifelse(is.nan(n11 / n1),0,n11 / n1))))
+#toc()
+head(nested_order_list)
+```

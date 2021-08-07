@@ -1,2 +1,2 @@
 # Basket-Market-Analysis
-Instacart service modeling using markov chain
+Quick analysis of Instacart service using Markov chain

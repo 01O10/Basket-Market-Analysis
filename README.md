@@ -1,2 +1,3 @@
-# Basket-Market-Analysis
-Quick analysis of Instacart service using Markov chain
+# Markov chain
+Quick Markov chain analysis of Instacart service by calculating the reordering probabilities for basket market products for different consumers.
+

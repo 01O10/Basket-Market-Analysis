@@ -74,7 +74,7 @@ orders <- fread("Downloads/dataset/instacart-market-basket-analysis/orders.csv/o
 
 orderp <- fread("Downloads/dataset/instacart-market-basket-analysis/order_products__prior.csv/order_products__prior.csv", drop="add_to_cart_order")
 
-#
+# 
 ```
 
 Next, we wrangle data to produce the 'order_list' data.frame.

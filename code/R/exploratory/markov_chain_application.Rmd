@@ -27,9 +27,9 @@ It has been inspired from the one provided by the Data scientist and Kaggle gran
 
 The solution we implement has some difference with the one provide by Matt Motoki :
 
-1.  **On the content** : instead of implementing a general Markov Chain based on the total dataset, here we implement one specific Markov chain by user to provide a person-centric solution.
+1.  **About the content** : instead of implementing a general Markov Chain based on the total dataset, here we implement one specific Markov chain by user to provide a person-centric solution.
 
-2.  **On the form** : the code we produced here relies on the Tidyverse package and the used of nested/mapping functions.
+2.  **About code design** : the code we produced here relies on the Tidyverse package and the used of nested/mapping functions.
     As such, we lose in code factorization comparing to Matt Motoki's R code but we gain in terms of comprehensiveness.
     Furthermore, the combination of nested and mapping functions permits to adopt a clear 'parallelized' analytical way of thinking and coding here.
     This is a strong advantage if we have the perspective to scale-up the present R code for big data analysis (using the furrr package for instance).
